@@ -79,37 +79,6 @@ iree_cc_library(
 
 iree_cc_library(
   NAME
-    host_fence
-  HDRS
-    "host_fence.h"
-  SRCS
-    "host_fence.cc"
-  DEPS
-    iree::base::status
-    iree::base::tracing
-    iree::hal::fence
-    absl::core_headers
-    absl::inlined_vector
-    absl::synchronization
-    absl::span
-  PUBLIC
-)
-
-iree_cc_test(
-  NAME
-    host_fence_test
-  SRCS
-    "host_fence_test.cc"
-  DEPS
-    iree::hal::host::host_fence
-    iree::base::status
-    iree::base::status_matchers
-    iree::testing::gtest_main
-    absl::time
-)
-
-iree_cc_library(
-  NAME
     host_local_allocator
   HDRS
     "host_local_allocator.h"
@@ -142,18 +111,48 @@ iree_cc_library(
 
 iree_cc_library(
   NAME
+    host_semaphore
+  HDRS
+    "host_semaphore.h"
+  SRCS
+    "host_semaphore.cc"
+  DEPS
+    absl::base
+    absl::inlined_vector
+    absl::span
+    absl::synchronization
+    iree::base::status
+    iree::base::tracing
+    iree::hal::semaphore
+  PUBLIC
+)
+
+iree_cc_test(
+  NAME
+    host_semaphore_test
+  SRCS
+    "host_semaphore_test.cc"
+  DEPS
+    absl::time
+    iree::testing::gtest_main
+    iree::base::status
+    iree::base::status_matchers
+    iree::hal::host::host_semaphore
+)
+
+iree_cc_library(
+  NAME
     host_submission_queue
   HDRS
     "host_submission_queue.h"
   SRCS
     "host_submission_queue.cc"
   DEPS
-    iree::hal::host::host_fence
+    iree::hal::host::host_semaphore
     iree::base::intrusive_list
     iree::base::status
     iree::base::tracing
     iree::hal::command_queue
-    iree::hal::fence
     iree::hal::semaphore
     absl::core_headers
     absl::inlined_vector

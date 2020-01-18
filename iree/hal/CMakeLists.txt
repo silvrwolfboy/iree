@@ -51,8 +51,8 @@ iree_cc_library(
     iree::hal::device
     iree::hal::driver
     iree::hal::driver_registry
-    iree::hal::fence
     iree::hal::heap_buffer
+    iree::hal::resource_set
     iree::hal::semaphore
     iree::base::api
     iree::base::api_util
@@ -211,7 +211,6 @@ iree_cc_library(
     "command_queue.h"
   DEPS
     iree::hal::command_buffer
-    iree::hal::fence
     iree::hal::semaphore
     iree::base::bitfield
     iree::base::status
@@ -321,8 +320,8 @@ iree_cc_library(
     iree::hal::device
     iree::hal::device_placement
     iree::hal::executable_format
-    iree::hal::fence
     iree::hal::heap_buffer
+    iree::hal::semaphore
     iree::base::source_location
     iree::base::status
     iree::base::time
@@ -441,18 +440,6 @@ iree_cc_library(
 )
 
 iree_cc_library(
-  NAME
-    fence
-  HDRS
-    "fence.h"
-  DEPS
-    iree::hal::resource
-    iree::base::status
-  PUBLIC
-)
-
-iree_cc_library(
-  NAME
     heap_buffer
   HDRS
     "heap_buffer.h"
@@ -481,12 +468,40 @@ iree_cc_library(
 
 iree_cc_library(
   NAME
+    resource_set
+  HDRS
+    "resource_set.h"
+  SRCS
+    "resource_set.cc"
+  DEPS
+    iree::base::ref_ptr
+    iree::hal::resource
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
+    resource_timeline
+  HDRS
+    "resource_timeline.h"
+  DEPS
+    iree::base::ref_ptr
+    iree::hal::resource
+    iree::hal::resource_set
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
     semaphore
   HDRS
     "semaphore.h"
   DEPS
+    absl::time
+    iree::base::status
+    iree::base::time
     iree::hal::resource
-    absl::variant
+    iree::hal::resource_set
   PUBLIC
 )
 
