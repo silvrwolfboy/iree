@@ -12,24 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef IREE_COMPILER_TRANSLATION_SPIRV_LINALGTOSPIRV_LOWERTOSPIRV_H
-#define IREE_COMPILER_TRANSLATION_SPIRV_LINALGTOSPIRV_LOWERTOSPIRV_H
+#ifndef IREE_COMPILER_TRANSLATION_SPIRV_LINALGTOSPIRV_PASSES_H
+#define IREE_COMPILER_TRANSLATION_SPIRV_LINALGTOSPIRV_PASSES_H
 
 #include "mlir/Pass/Pass.h"
 
 namespace mlir {
 namespace iree_compiler {
 
-/// Populates passes needed to lower a XLA HLO op to SPIR-V dialect.
-void addLowerToSPIRVPasses(OpPassManager &pm,
-                           ArrayRef<int64_t> workGroupSize = {});
+std::unique_ptr<OpPassBase<FuncOp>> createIREEGpuKernelOutliningPass();
 
-/// Populates passes needed to lower a linalg.generic op (on buffers) to SPIR-V
-/// dialect.
-void addLinalgToSPIRVPasses(OpPassManager &pm,
-                            ArrayRef<int64_t> workGroupSize = {});
-
-}  // namespace iree_compiler
+}
 }  // namespace mlir
 
-#endif  // IREE_COMPILER_TRANSLATION_SPIRV_XLATOLINALGSPIRV_LOWERTOSPIRV_H
+#endif

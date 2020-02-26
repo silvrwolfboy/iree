@@ -22,6 +22,7 @@
 #include "iree/compiler/Translation/SPIRV/EmbeddedKernels/EmbeddedKernels.h"
 #include "iree/compiler/Translation/SPIRV/LinalgToSPIRV/LowerToSPIRV.h"
 #include "iree/compiler/Translation/SPIRV/XLAToSPIRV/IREEToSPIRVPass.h"
+#include "iree/compiler/Translation/XLAToLinalg/ReductionLowering.h"
 #include "iree/schemas/spirv_executable_def_generated.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -185,6 +186,17 @@ static void propagateModifiedExecutableABI(
       auto workGroupSize = funcOp.getAttrOfType<DenseIntElementsAttr>(
           "iree.executable.workgroup_size");
       targetEntryOp.setAttr("workgroup_size", workGroupSize);
+    } else if (auto entryOp = dyn_cast<IREE::Flow::ReductionEntryOp>(&op)) {
+      auto targetEntryOp =
+          executableOp.lookupSymbol<IREE::HAL::ExecutableEntryPointOp>(
+              entryOp.sym_name());
+      auto funcOp = moduleOp.lookupSymbol<FuncOp>(entryOp.function_ref());
+      auto workGroupSize = funcOp.getAttrOfType<DenseIntElementsAttr>(
+          "iree.executable.workgroup_size");
+      llvm::errs() << "work group size: ";
+      workGroupSize.dump();
+      targetEntryOp.setAttr("workgroup_size", workGroupSize);
+      targetEntryOp.dump();
     }
   }
 }
@@ -222,7 +234,17 @@ LogicalResult translateToVulkanSPIRVExecutable(
 
     // Lower module to spirv::ModuleOp.
     PassManager conversionPassManager(moduleOp.getContext());
-    if (useLinalgPathForCodegen) {
+    bool isReductionDispatchFn = false;
+    for (auto fn : moduleOp.getOps<FuncOp>()) {
+      if (fn.getAttr("iree.executable.reduction")) {
+        isReductionDispatchFn = true;
+        break;
+      }
+    }
+    if (isReductionDispatchFn) {
+      conversionPassManager.addPass(createHLOReductionToLinalgPass());
+      addLinalgToSPIRVPasses(conversionPassManager);
+    } else if (useLinalgPathForCodegen) {
       SmallVector<int64_t, 3> workGroupSizes(
           clLinalgToSPIRVWorkGroupSize.begin(),
           clLinalgToSPIRVWorkGroupSize.end());

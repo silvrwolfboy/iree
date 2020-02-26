@@ -18,7 +18,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "iree/compiler/Translation/SPIRV/LinalgToSPIRV/LowerToSPIRV.h"
+
 #include "iree/compiler/Translation/CodegenUtils/CodegenUtils.h"
+#include "iree/compiler/Translation/SPIRV/LinalgToSPIRV/Passes.h"
 #include "iree/compiler/Translation/XLAToLinalg/Passes.h"
 #include "mlir/Conversion/GPUToSPIRV/ConvertGPUToSPIRV.h"
 #include "mlir/Conversion/LoopsToGPU/LoopsToGPU.h"
@@ -182,6 +185,10 @@ struct IREEGPUToSPIRVPass : public ModulePass<IREEGPUToSPIRVPass> {
   void runOnModule() {
     MLIRContext *context = &getContext();
     ModuleOp moduleOp = getModule();
+
+    // Need to get the workgroup size from the original function.
+    // TODO(b/150312935): When the usage of attributes on the function is
+    // dropped we might not need to do this.
     FuncOp funcOp = nullptr;
     auto walkResult = moduleOp.walk([&funcOp](FuncOp fOp) -> WalkResult {
       if (isDispatchFunction(fOp)) {
@@ -194,48 +201,17 @@ struct IREEGPUToSPIRVPass : public ModulePass<IREEGPUToSPIRVPass> {
       moduleOp.emitError("expected a single dispatch function within module");
       return signalPassFailure();
     }
-    SmallVector<Operation *, 1> kernelModules;
-    OpBuilder builder(context);
-    builder.setInsertionPoint(funcOp.getOperation());
-    StringRef fnName = SymbolTable::getSymbolName(funcOp);
-
-    auto funcWalkResult =
-        funcOp.walk([&builder, &moduleOp, &kernelModules,
-                     &fnName](gpu::LaunchFuncOp gpuLaunchOp) -> WalkResult {
-          auto kernelModuleName = gpuLaunchOp.getKernelModuleName();
-          auto gpuModuleOp =
-              moduleOp.lookupSymbol<gpu::GPUModuleOp>(kernelModuleName);
-          if (!gpuModuleOp) return WalkResult::interrupt();
-
-          // Clone the GPU module into the funcop to convert into a SPIR-V
-          // module.
-          auto cloneModuleOp = cast<gpu::GPUModuleOp>(
-              builder.clone(*gpuModuleOp.getOperation()));
-          // This is a dirty hack to make the gpu.func the same name as the
-          // dispatch function (GPU outlining pass changed the name, and its
-          // easiest to change it here to what is expected in IREE)
-          auto gpuFuncOps =
-              cloneModuleOp.body().front().getOps<gpu::GPUFuncOp>();
-          if (!mlir::has_single_element(gpuFuncOps))
-            return WalkResult::interrupt();
-          gpu::GPUFuncOp gpuFuncOp = *gpuFuncOps.begin();
-          SymbolTable::setSymbolName(gpuFuncOp, fnName);
-          kernelModules.push_back(cloneModuleOp);
-          return WalkResult::advance();
-        });
-    if (funcWalkResult.wasInterrupted()) {
-      funcOp.emitError(
-          "expected gpu.func operation within gpu.module operation while "
-          "lowering to SPIR-V");
-      return signalPassFailure();
-    }
-    SPIRVTypeConverter typeConverter;
-    OwningRewritePatternList patterns;
     SmallVector<int32_t, 3> workGroupSize;
     if (failed(getWorkGroupSize(funcOp, workGroupSize))) return;
 
+    auto kernelModules = moduleOp.getOps<gpu::GPUModuleOp>();
+    SPIRVTypeConverter typeConverter;
+    OwningRewritePatternList patterns;
+
     // Set spv.entry_point_abi on each kernel functions to drive SPIR-V CodeGen.
     // This is required because SPIR-V CodeGen's contract.
+    // TODO(ravishankarm/antiagainst) : When there is a mirror of the
+    // workgroup-size attribute in gpu dialect use that instad.
     StringRef abiAttrName = spirv::getEntryPointABIAttrName();
     auto abiAttr = spirv::getEntryPointABIAttr(workGroupSize, context);
     for (Operation *gpuModule : kernelModules)
@@ -253,7 +229,9 @@ struct IREEGPUToSPIRVPass : public ModulePass<IREEGPUToSPIRVPass> {
       return typeConverter.isSignatureLegal(op.getType());
     });
 
-    if (failed(applyFullConversion(kernelModules, *target, patterns,
+    SmallVector<Operation *, 1> targetOps(kernelModules.begin(),
+                                          kernelModules.end());
+    if (failed(applyFullConversion(targetOps, *target, patterns,
                                    &typeConverter))) {
       return signalPassFailure();
     }
@@ -322,8 +300,10 @@ struct UpdateWorkGroupSizePass : FunctionPass<UpdateWorkGroupSizePass> {
 };
 }  // namespace
 
-static void addLinalgToSPIRVPasses(OpPassManager &pm) {
+void addLinalgToSPIRVPasses(OpPassManager &pm,
+                            ArrayRef<int64_t> workGroupSize) {
   // Linalg to loops.
+  pm.addPass(std::make_unique<UpdateWorkGroupSizePass>(workGroupSize));
   pm.addPass(std::make_unique<IREETileLinalgPass>());
   pm.addPass(createConvertLinalgToLoopsPass());
   pm.addPass(createLowerAffinePass());
@@ -331,7 +311,7 @@ static void addLinalgToSPIRVPasses(OpPassManager &pm) {
   pm.addPass(createCSEPass());
 
   pm.addPass(std::make_unique<LoopsToGPUPass>());
-  pm.addPass(createGpuKernelOutliningPass());
+  pm.addPass(createIREEGpuKernelOutliningPass());
   pm.addPass(createCanonicalizerPass());
   pm.addPass(createCSEPass());
   pm.addPass(createLowerAffinePass());
@@ -353,9 +333,18 @@ void addLowerToSPIRVPasses(OpPassManager &pm, ArrayRef<int64_t> workGroupSize) {
   pm.addPass(createXLAToLinalgPass());
   pm.addPass(createLinalgFusionPass());
   pm.addPass(createLinalgTensorToBufferConversionPass());
-  pm.addPass(std::make_unique<UpdateWorkGroupSizePass>(workGroupSize));
   addLinalgToSPIRVPasses(pm);
 }
+
+static PassPipelineRegistration<WorkGroupOptions> linalgToSPIRVPipeline(
+    "iree-linalg-to-spirv",
+    "Runs the progressive lowering pipeline from Linalg to SPIR-V",
+    [](OpPassManager &passManager, const WorkGroupOptions &options) {
+      SmallVector<int64_t, 2> workGroupSize;
+      workGroupSize.assign(options.workGroupSize.begin(),
+                           options.workGroupSize.end());
+      addLinalgToSPIRVPasses(passManager, workGroupSize);
+    });
 
 static PassPipelineRegistration<WorkGroupOptions> xlaToLinalgSPIRVPipeline(
     "iree-xla-to-linalg-to-spirv",
