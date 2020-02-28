@@ -22,6 +22,7 @@
 #include "iree/compiler/Translation/SPIRV/EmbeddedKernels/EmbeddedKernels.h"
 #include "iree/compiler/Translation/SPIRV/LinalgToSPIRV/LowerToSPIRV.h"
 #include "iree/compiler/Translation/SPIRV/XLAToSPIRV/IREEToSPIRVPass.h"
+#include "iree/compiler/Translation/XLAToLinalg/ReductionLowering.h"
 #include "iree/schemas/spirv_executable_def_generated.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -185,8 +186,39 @@ static void propagateModifiedExecutableABI(
       auto workGroupSize = funcOp.getAttrOfType<DenseIntElementsAttr>(
           "iree.executable.workgroup_size");
       targetEntryOp.setAttr("workgroup_size", workGroupSize);
+    } else if (auto entryOp = dyn_cast<IREE::Flow::ReductionEntryOp>(&op)) {
+      auto targetEntryOp =
+          executableOp.lookupSymbol<IREE::HAL::ExecutableEntryPointOp>(
+              entryOp.sym_name());
+      auto funcOp = moduleOp.lookupSymbol<FuncOp>(entryOp.function_ref());
+      auto workGroupSize = funcOp.getAttrOfType<DenseIntElementsAttr>(
+          "iree.executable.workgroup_size");
+      targetEntryOp.setAttr("workgroup_size", workGroupSize);
     }
   }
+}
+
+/// Checks if the linalg on buffers path is to be used for compilation. This
+/// pipeline is used for cases where, dispatch function contains a single
+/// xla_hlo operation that can be converted to linalg on buffers, converted to
+/// loops and lowered to SPIR-V.
+static bool useLinalgOnBuffers(ModuleOp moduleOp) {
+  // TODO(ravishankarm): For now only reduction dispatch functions take this
+  // path. Modify this to actually check that this contains a single xla_hlo op
+  // which is a reduce (for now at this stage of the compilation, we dont see
+  // this.
+  return llvm::any_of(moduleOp.getOps<FuncOp>(), [](FuncOp fn) {
+    return static_cast<bool>(fn.getAttr("iree.executable.reduction"));
+  });
+}
+
+/// Check if the linalg on tensors path is to be used for compilation. This
+/// pipeline is avoided if the dispatch function has any ops not supported on
+/// this path.
+static bool useLinalgOnTensors(ModuleOp moduleOp) {
+  /// TODO(ravishankarm): For now just rely on the command line flag, but
+  /// eventually look at the ops in the dispatch function.
+  return useLinalgPathForCodegen;
 }
 
 LogicalResult translateToVulkanSPIRVExecutable(
@@ -222,12 +254,16 @@ LogicalResult translateToVulkanSPIRVExecutable(
 
     // Lower module to spirv::ModuleOp.
     PassManager conversionPassManager(moduleOp.getContext());
-    if (useLinalgPathForCodegen) {
+    if (useLinalgOnBuffers(moduleOp)) {
+      conversionPassManager.addPass(createHLOReductionToLinalgPass());
+      addLinalgToSPIRVPasses(conversionPassManager);
+    } else if (useLinalgOnTensors(moduleOp)) {
       SmallVector<int64_t, 3> workGroupSizes(
           clLinalgToSPIRVWorkGroupSize.begin(),
           clLinalgToSPIRVWorkGroupSize.end());
       addLowerToSPIRVPasses(conversionPassManager, workGroupSizes);
     } else {
+      // Use the Index computation path as fallback.
       addIREEToSPIRVPasses(conversionPassManager);
     }
     if (failed(conversionPassManager.run(moduleOp))) {
