@@ -66,6 +66,18 @@ void convertExtensions(Vulkan::TargetEnvAttr vkTargetEnv,
   }
 }
 
+/// Gets the corresponding SPIR-V capabilities for the given Vulkan target
+/// environment.
+void convertCapabilities(Vulkan::TargetEnvAttr vkTargetEnv,
+                         SmallVectorImpl<spirv::Capability> &capabilities) {
+  // Add unconditionally supported capabilities.
+  // Note that "Table 54. List of SPIR-V Capabilities and enabling features or
+  // extensions" in the Vulkan spec contains the full list. Right now omit those
+  // implicitly declared or not useful for us.
+  capabilities.assign({spirv::Capability::Shader, spirv::Capability::Image1D,
+                       spirv::Capability::ImageBuffer});
+}
+
 /// Gets the corresponding SPIR-V resource limits for the given Vulkan target
 /// environment.
 spirv::ResourceLimitsAttr convertResourceLimits(
@@ -101,11 +113,11 @@ spirv::TargetEnvAttr getSpirvTargetEnv(spirv::Version version,
 }
 }  // anonymous namespace
 
-// TODO(antiagainst): change this to the real SwiftShader target environment.
+// TODO(antiagainst): register more SwiftShader extensions.
 const char *swiftShaderTargetEnvAssembly =
-    "#vk.target_env<v1.1, r(130), [], {"
+    "#vk.target_env<v1.1, r(0), [VK_KHR_storage_buffer_storage_class], {"
     "maxComputeWorkGroupInvocations = 128: i32, "
-    "maxComputeWorkGroupSize = dense<[64, 4, 4]>: vector<3xi32>"
+    "maxComputeWorkGroupSize = dense<[128, 128, 64]>: vector<3xi32>"
     "}>";
 
 spirv::TargetEnvAttr convertTargetEnv(Vulkan::TargetEnvAttr vkTargetEnv) {
@@ -115,6 +127,7 @@ spirv::TargetEnvAttr convertTargetEnv(Vulkan::TargetEnvAttr vkTargetEnv) {
   convertExtensions(vkTargetEnv, spvExtensions);
 
   SmallVector<spirv::Capability, 8> spvCapabilities;
+  convertCapabilities(vkTargetEnv, spvCapabilities);
 
   auto spvLimits = convertResourceLimits(vkTargetEnv);
 
