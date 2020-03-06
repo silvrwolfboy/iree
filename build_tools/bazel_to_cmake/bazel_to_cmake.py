@@ -283,10 +283,13 @@ class BuildFileFunctions(object):
     return "  FLATC_ARGS\n%s\n" % (flatc_args,)
 
   def _convert_unimplemented_function(self, function, details=""):
-    message = "Unimplemented %(function)s: %(details)s" % {
-        "function": function,
-        "details": details,
-    }
+    # An upstream check prevents changes with this phrase from being submitted.
+    # Written as separate literals to avoid the check triggering here.
+    message = ("DO" + " NOT" + " SUBMIT." +
+               " Unimplemented %(function)s: %(details)s" % {
+                   "function": function,
+                   "details": details,
+               })
     if not self.converter.first_error:
       self.converter.first_error = NotImplementedError(message)
     self.converter.body += "# %s\n" % (message,)
