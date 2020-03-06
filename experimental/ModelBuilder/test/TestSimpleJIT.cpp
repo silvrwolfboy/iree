@@ -35,8 +35,8 @@ static llvm::cl::opt<std::string> runtimeSupport(
     "runtime-support", llvm::cl::desc("Runtime support library filename"),
     llvm::cl::value_desc("filename"), llvm::cl::init("-"));
 
-// Flush the different output streams. Needed to ensure FileCheck
-// sees the various buffered streams in a reasonable order.
+// Flush the different output streams. Needed to ensure that the IreeFileCheck
+// utility sees the various buffered streams in a reasonable order.
 static void flush() {
   fflush(stderr);
   fflush(stdout);
@@ -49,10 +49,10 @@ void testVectorAdd1d(StringLiteral funcName, unsigned kNumElements) {
   ModelBuilder modelBuilder;
 
   auto f32 = modelBuilder.f32;
-  auto mnVectorType = modelBuilder.getVectorType({M}, f32);
-  auto typeA = modelBuilder.getMemRefType({kNumElements}, mnVectorType);
-  auto typeB = modelBuilder.getMemRefType({kNumElements}, mnVectorType);
-  auto typeC = modelBuilder.getMemRefType({kNumElements}, mnVectorType);
+  auto mVectorType = modelBuilder.getVectorType({M}, f32);
+  auto typeA = modelBuilder.getMemRefType({kNumElements}, mVectorType);
+  auto typeB = modelBuilder.getMemRefType({kNumElements}, mVectorType);
+  auto typeC = modelBuilder.getMemRefType({kNumElements}, mVectorType);
 
   // 1. Build a simple vector_add.
   {
@@ -221,7 +221,25 @@ int main(int argc, char **argv) {
   llvm::InitLLVM y(argc, argv);
   llvm::cl::ParseCommandLineOptions(argc, argv, "TestSimpleJIT\n");
 
+  // Verify generated MLIR:
+  //
   // CHECK-LABEL: func @test_vector_add_1d_1x3f32
+  //  CHECK-SAME: %[[A:.*0]]: memref<1xvector<3xf32>>,
+  //  CHECK-SAME: %[[B:.*1]]: memref<1xvector<3xf32>>,
+  //  CHECK-SAME: %[[C:.*2]]: memref<1xvector<3xf32>>)
+  //   CHECK-DAG: %[[z:.*]] = constant 0 : index
+  //   CHECK-DAG: %[[a:.*]] = load %[[A]][%[[z]]] : memref<1xvector<3xf32>>
+  //   CHECK-DAG: %[[b:.*]] = load %[[B]][%[[z]]] : memref<1xvector<3xf32>>
+  //       CHECK: %[[c:.*]] = addf %[[a]], %[[b]] : vector<3xf32>
+  //       CHECK: store %[[c]], %[[C]][%[[z]]] : memref<1xvector<3xf32>>
+  //       CHECK: %[[p:.*]] = load %[[A]][%[[z]]] : memref<1xvector<3xf32>>
+  //       CHECK: vector.print %[[p]] : vector<3xf32>
+  //       CHECK: %[[q:.*]] = load %[[B]][%[[z]]] : memref<1xvector<3xf32>>
+  //       CHECK: vector.print %[[q]] : vector<3xf32>
+  //       CHECK: %[[r:.*]] = load %[[C]][%[[z]]] : memref<1xvector<3xf32>>
+  //       CHECK: vector.print %[[r]] : vector<3xf32>
+  //
+  // Verify runtime output:
   //       CHECK: ( 1, 1, 1 )
   //       CHECK: ( 1, 2, 3 )
   //       CHECK: ( 2, 3, 4 )
@@ -239,7 +257,25 @@ int main(int argc, char **argv) {
   //       CHECK: ( 7, 8, 9, 10, 11 )
   testVectorAdd1d<5>("test_vector_add_1d_2x5f32", /*kNumElements=*/2);
 
+  // Verify generated MLIR:
+  //
   // CHECK-LABEL: func @test_vector_add_2d_1x2_3f32
+  //  CHECK-SAME: %[[A:.*0]]: memref<1xvector<2x3xf32>>,
+  //  CHECK-SAME: %[[B:.*1]]: memref<1xvector<2x3xf32>>,
+  //  CHECK-SAME: %[[C:.*2]]: memref<1xvector<2x3xf32>>)
+  //   CHECK-DAG: %[[z:.*]] = constant 0 : index
+  //   CHECK-DAG: %[[a:.*]] = load %[[A]][%[[z]]] : memref<1xvector<2x3xf32>>
+  //   CHECK-DAG: %[[b:.*]] = load %[[B]][%[[z]]] : memref<1xvector<2x3xf32>>
+  //       CHECK: %[[c:.*]] = addf %[[a]], %[[b]] : vector<2x3xf32>
+  //       CHECK: store %[[c]], %[[C]][%[[z]]] : memref<1xvector<2x3xf32>>
+  //       CHECK: %[[p:.*]] = load %[[A]][%[[z]]] : memref<1xvector<2x3xf32>>
+  //       CHECK: vector.print %[[p]] : vector<2x3xf32>
+  //       CHECK: %[[q:.*]] = load %[[B]][%[[z]]] : memref<1xvector<2x3xf32>>
+  //       CHECK: vector.print %[[q]] : vector<2x3xf32>
+  //       CHECK: %[[r:.*]] = load %[[C]][%[[z]]] : memref<1xvector<2x3xf32>>
+  //       CHECK: vector.print %[[r]] : vector<2x3xf32>
+  //
+  // Verify runtime output:
   //       CHECK: ( ( 1, 1, 1 ), ( 1, 1, 1 ) )
   //       CHECK: ( ( 1, 2, 3 ), ( 4, 5, 6 ) )
   //       CHECK: ( ( 2, 3, 4 ), ( 5, 6, 7 ) )
@@ -251,13 +287,18 @@ int main(int argc, char **argv) {
   // CHECK: ( ( 32, 33, 34, 35, 36 ), ( 37{{.*}}41 ), ( 42, 43, 44, 45, 46 ) )
   testVectorAdd2d<3, 5>("test_vector_add_2d_3x3_5f32", /*kNumElements=*/3);
 
+  // Verify generated MLIR:
+  //
   // CHECK-LABEL: func @test_vector_matmul(
   //  CHECK-SAME:   %[[A:.*]]: memref<?x?xvector<4x16xf32>>,
   //  CHECK-SAME:   %[[B:.*]]: memref<?x?xvector<16x8xf32>>,
   //  CHECK-SAME:   %[[C:.*]]: memref<?x?xvector<4x8xf32>>)
-  // Fill its body.
-  //      CHECK:   linalg.generic {{.*}} %[[A]], %[[B]], %[[C]]
-  //      CHECK:     vector.contract {{.*}} : vector<4x16xf32>, vector<16x8xf32>
-  // CHECK-SAME:       into vector<4x8xf32>
+  //       CHECK:   linalg.generic {{.*}} %[[A]], %[[B]], %[[C]]
+  //       CHECK:     vector.contract {{.*}} : vector<4x16xf32>,
+  //       vector<16x8xf32>
+  //  CHECK-SAME:       into vector<4x8xf32>
+  //
+  // Verify runtime output:
+  // TBD.
   testMatmulOnVectors<4, 8, 16>("test_vector_matmul");
 }
